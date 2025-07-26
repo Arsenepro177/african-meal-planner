@@ -75,6 +75,9 @@ cp .env.example .env
 # EXPO_PUBLIC_SUPABASE_URL=your-supabase-url
 # EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
+# Set up the database (one-time setup)
+npm run setup-db
+
 # Start the development server
 npm run dev
 ```

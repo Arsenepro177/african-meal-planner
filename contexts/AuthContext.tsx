@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { authAPI, TokenManager } from '@/services/api';
+import { authService, supabase } from '@/lib/supabase';
+import { userService } from '@/lib/database';
 
 interface User {
-  id: number;
+  id: string;
   username: string;
   email: string;
   first_name: string;
@@ -50,19 +51,37 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // Check for existing token on app start
   useEffect(() => {
-    checkAuthStatus();
+    initializeAuth();
   }, []);
 
-  const checkAuthStatus = async () => {
+  const initializeAuth = async () => {
     try {
-      const token = await TokenManager.getToken();
-      if (token) {
-        const userData = await authAPI.getProfile();
-        setUser(userData);
+      const { session, error } = await authService.getSession();
+      if (error) throw error;
+      
+      if (session?.user) {
+        const { data: userData, error: userError } = await userService.getUserProfile(session.user.id);
+        if (userError) throw userError;
+        
+        if (userData) {
+          setUser({
+            id: userData.id,
+            username: userData.username,
+            email: userData.email,
+            first_name: userData.first_name,
+            last_name: userData.last_name,
+            cooking_level: userData.cooking_level,
+            family_size: userData.family_size,
+            profile: userData.user_profiles ? {
+              onboarding_completed: userData.user_profiles.onboarding_completed,
+              daily_calorie_target: userData.user_profiles.daily_calorie_target,
+              activity_level: userData.user_profiles.activity_level,
+            } : undefined,
+          });
+        }
       }
     } catch (error) {
       console.error('Auth check failed:', error);
-      await TokenManager.removeToken();
     } finally {
       setIsLoading(false);
     }
@@ -71,8 +90,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = async (email: string, password: string) => {
     try {
       setIsLoading(true);
-      const response = await authAPI.login({ email, password });
-      setUser(response.user);
+      const { data, error } = await authService.signIn(email, password);
+      if (error) throw error;
+      
+      if (data.user) {
+        const { data: userData, error: userError } = await userService.getUserProfile(data.user.id);
+        if (userError) throw userError;
+        
+        if (userData) {
+          setUser({
+            id: userData.id,
+            username: userData.username,
+            email: userData.email,
+            first_name: userData.first_name,
+            last_name: userData.last_name,
+            cooking_level: userData.cooking_level,
+            family_size: userData.family_size,
+            profile: userData.user_profiles ? {
+              onboarding_completed: userData.user_profiles.onboarding_completed,
+              daily_calorie_target: userData.user_profiles.daily_calorie_target,
+              activity_level: userData.user_profiles.activity_level,
+            } : undefined,
+          });
+        }
+      }
     } catch (error) {
       console.error('Login failed:', error);
       throw error;
@@ -84,8 +125,39 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const register = async (userData: any) => {
     try {
       setIsLoading(true);
-      const response = await authAPI.register(userData);
-      setUser(response.user);
+      const { data, error } = await authService.signUp(userData.email, userData.password, {
+        first_name: userData.first_name,
+        last_name: userData.last_name,
+      });
+      if (error) throw error;
+      
+      if (data.user) {
+        // Create user profile in database
+        const { user: newUser, error: profileError } = await userService.createUserProfile(data.user.id, {
+          email: userData.email,
+          username: userData.username || userData.email,
+          first_name: userData.first_name || '',
+          last_name: userData.last_name || '',
+        });
+        
+        if (profileError) throw profileError;
+        
+        if (newUser) {
+          setUser({
+            id: newUser.id,
+            username: newUser.username,
+            email: newUser.email,
+            first_name: newUser.first_name,
+            last_name: newUser.last_name,
+            cooking_level: newUser.cooking_level,
+            family_size: newUser.family_size,
+            profile: {
+              onboarding_completed: false,
+              activity_level: 'moderate',
+            },
+          });
+        }
+      }
     } catch (error) {
       console.error('Registration failed:', error);
       throw error;
@@ -96,7 +168,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const logout = async () => {
     try {
-      await authAPI.logout();
+      await authService.signOut();
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
@@ -106,8 +178,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const updateProfile = async (profileData: any) => {
     try {
-      const updatedUser = await authAPI.updateProfile(profileData);
-      setUser(updatedUser);
+      if (!user) throw new Error('No user logged in');
+      
+      const { data, error } = await userService.updateUserProfile(user.id, profileData);
+      if (error) throw error;
+      
+      // Refresh user data
+      await refreshUser();
     } catch (error) {
       console.error('Profile update failed:', error);
       throw error;
@@ -116,8 +193,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const completeOnboarding = async (onboardingData: any) => {
     try {
-      const response = await authAPI.completeOnboarding(onboardingData);
-      setUser(response.user);
+      if (!user) throw new Error('No user logged in');
+      
+      const { data, error } = await userService.completeOnboarding(user.id, onboardingData);
+      if (error) throw error;
+      
+      // Refresh user data
+      await refreshUser();
     } catch (error) {
       console.error('Onboarding completion failed:', error);
       throw error;
@@ -126,8 +208,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const refreshUser = async () => {
     try {
-      const userData = await authAPI.getProfile();
-      setUser(userData);
+      if (!user) return;
+      
+      const { data: userData, error } = await userService.getUserProfile(user.id);
+      if (error) throw error;
+      
+      if (userData) {
+        setUser({
+          id: userData.id,
+          username: userData.username,
+          email: userData.email,
+          first_name: userData.first_name,
+          last_name: userData.last_name,
+          cooking_level: userData.cooking_level,
+          family_size: userData.family_size,
+          profile: userData.user_profiles ? {
+            onboarding_completed: userData.user_profiles.onboarding_completed,
+            daily_calorie_target: userData.user_profiles.daily_calorie_target,
+            activity_level: userData.user_profiles.activity_level,
+          } : undefined,
+        });
+      }
     } catch (error) {
       console.error('User refresh failed:', error);
       throw error;
