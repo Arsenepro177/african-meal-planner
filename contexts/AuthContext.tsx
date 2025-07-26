@@ -140,7 +140,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           last_name: userData.last_name || '',
         });
         
-        if (profileError) throw profileError;
+        if (profileError) {
+          console.warn('Profile creation failed, but auth succeeded:', profileError);
+          // Don't throw error here - user is authenticated, profile can be created later
+        }
         
         if (newUser) {
           setUser({
@@ -151,6 +154,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             last_name: newUser.last_name,
             cooking_level: newUser.cooking_level,
             family_size: newUser.family_size,
+            profile: {
+              onboarding_completed: false,
+              activity_level: 'moderate',
+            },
+          });
+        } else {
+          // Fallback - set user from auth data if profile creation failed
+          setUser({
+            id: data.user.id,
+            username: userData.username || userData.email,
+            email: userData.email,
+            first_name: userData.first_name || '',
+            last_name: userData.last_name || '',
+            cooking_level: 'beginner',
+            family_size: 1,
             profile: {
               onboarding_completed: false,
               activity_level: 'moderate',

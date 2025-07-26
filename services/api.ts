@@ -1,8 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE_URL = __DEV__ 
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || (__DEV__ 
   ? 'http://localhost:8000/api' 
-  : 'https://your-production-api.com/api';
+  : 'https://your-production-api.com/api');
 
 // Token management
 export const TokenManager = {
